@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B2 Suomi Harjoittelu</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#fff;color:#111827;min-height:100vh}
+button{font-family:inherit;cursor:pointer}
+textarea{font-family:inherit;font-size:15px}
+textarea:focus{outline:none;border-color:#003580!important}
+.irow:hover{background:#dde8f7!important}
+@keyframes up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pop{0%{transform:scale(.97)}60%{transform:scale(1.02)}100%{transform:scale(1)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
+const {useState,useCallback,createElement:h,Fragment}=React;
+
+const FINN="#003580",FINNL="#dde8f7",BG="#fff",SURF="#f5f7fa",BRD="#dde3ed";
+const TXT="#111827",MUTED="#6b7280",RED="#b91c1c",REDL="#fff1f1";
+const GREEN="#15803d",GREENL="#f0fdf4",AMBER="#b45309",AMBERL="#fffbeb";
+
+async function callAPI(prompt){
+  const res=await fetch("/api/check",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt})});
+  const data=await res.json();
+  if(!res.ok||data.error)throw new Error(data.error||"API error");
+  return data.text;
+}
+
+function parseResponse(raw){
+  const errors=[];
+  const errBlock=(raw.match(/ERRORS:\s*([\s\S]*?)(?=\nCORRECTED:|$)/i)||[])[1]||"";
+  for(const line of errBlock.split("\n")){
+    const l=line.trim();
+    if(!l.startsWith("-")||/no errors/i.test(l))continue;
+    const wm=l.match(/WRONG:\s*"?([^"|]{1,80})"?\s*\|/i);
+    const rm=l.match(/RIGHT:\s*"?([^"|]{1,80})"?\s*\|/i);
+    const ym=l.match(/WHY:\s*(.+)$/i);
+    if(wm&&rm)errors.push({wrong:wm[1].trim(),right:rm[1].trim(),why:(ym&&ym[1])||""});
+  }
+  const corrected=((raw.match(/CORRECTED:\s*([\s\S]*?)$/i)||[])[1]||"").trim();
+  return{errors,corrected};
+}
+
+function marked(text,phrases,color,bg,onTap,active){
+  if(!phrases||!phrases.length)return h("div",{style:{fontSize:15,lineHeight:1.95,whiteSpace:"pre-wrap"}},text);
+  const ranges=[];
+  phrases.forEach(ph=>{
+    if(!ph)return;let pos=0;
+    while(true){const i=text.toLowerCase().indexOf(ph.toLowerCase(),pos);if(i===-1)break;ranges.push({s:i,e:i+ph.length,ph});pos=i+1;}
+  });
+  ranges.sort((a,b)=>a.s-b.s);
+  const clean=[];let last=0;
+  for(const r of ranges){if(r.s>=last){clean.push(r);last=r.e;}}
+  const parts=[];let cursor=0;
+  for(const{s,e,ph}of clean){
+    if(cursor<s)parts.push(h("span",{key:"t"+cursor},text.slice(cursor,s)));
+    const isAct=active&&active.toLowerCase()===ph.toLowerCase();
+    parts.push(h("span",{key:"h"+s,onClick:()=>onTap&&onTap(ph),style:{background:isAct?color+"44":bg,color,borderBottom:`2px solid ${color}`,borderRadius:3,padding:"1px 2px",fontWeight:700,cursor:onTap?"pointer":"default"}},text.slice(s,e)));
+    cursor=e;
+  }
+  if(cursor<text.length)parts.push(h("span",{key:"t"+cursor},text.slice(cursor)));
+  return h("div",{style:{fontSize:15,lineHeight:1.95,whiteSpace:"pre-wrap"}},parts);
+}
+
+function Btn({onClick,children,outline,full,disabled,small}){
+  return h("button",{onClick,disabled,style:{background:disabled?"#e5e7eb":outline?BG:FINN,color:disabled?"#9ca3af":outline?FINN:"#fff",border:`2px solid ${disabled?"#e5e7eb":FINN}`,padding:small?"8px 16px":"11px 24px",borderRadius:8,fontSize:small?13:15,fontWeight:700,cursor:disabled?"not-allowed":"pointer",width:full?"100%":"auto"}},children);
+}
+function Card({children,accent,style}){
+  return h("div",{style:{background:BG,border:`1.5px solid ${accent||BRD}`,borderRadius:12,padding:"20px 22px",marginBottom:14,...style}},children);
+}
+function Dot({n}){
+  return h("div",{style:{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:"50%",background:FINN,color:"#fff",fontSize:13,fontWeight:800,marginBottom:10}},n);
+}
+
+const QUIZ=[
+  {topic:"Kieltomuoto",correct:"Rasismi ei tee kansalle hyvää. Se ei edistä yhteenkuuluvuutta eikä auta rakentamaan parempaa yhteiskuntaa. Syrjintä ei kuulu demokraattiseen valtioon.",wrong1:"Rasismi ei tekee kansalle hyvää. Se ei edistää yhteenkuuluvuutta eikä auta rakentamaan parempaa yhteiskuntaa. Syrjintä ei kuulu demokraattiseen valtioon.",wrong2:"Rasismi ei tee kansalle hyvää. Se ei edistä yhteenkuuluvuutta eikä auttaa rakentamaan parempaa yhteiskuntaa. Syrjintä ei kuuluu demokraattiseen valtioon.",explanation:`"Ei" + verb → verb BASIC STEM only.\n\nWrong 1: ei tekee→ei tee | ei edistää→ei edistä\nWrong 2: ei auttaa→ei auta | ei kuuluu→ei kuulu\n\n"Ei" carries the personal ending — the verb doesn't need one. tekee→tee, sanoo→sano.`},
+  {topic:"Komparatiivi + partitiivi",correct:"Muuttajat etsivät parempaa elämää ja koulutusta. He haluavat tarjota lapsilleen turvallisempaa tulevaisuutta. Maahan muuttaminen on usein vaikeampaa kuin ihmiset ajattelevat.",wrong1:"Muuttajat etsivät parempi elämää ja koulutusta. He haluavat tarjota lapsilleen turvallisempi tulevaisuutta. Maahan muuttaminen on usein vaikea kuin ihmiset ajattelevat.",wrong2:"Muuttajat etsivät parempaa elämää ja koulutus. He haluavat tarjota lapsilleen turvallisempaa tulevaisuutta. Maahan muuttaminen on usein vaikeampaa kuin ihmiset ajattelevat.",explanation:`Wrong 1: Comparative must match noun case — noun is partitive so comparative must be partitive: parempaa not parempi.\n\nWrong 2: Coordinated nouns must match — elämää is partitive so koulutus→koulutusta.`},
+  {topic:"Relatiivipronomini",correct:"Tapasimme tutkijan, joka työskentelee ilmastonmuutoksen parissa. Hän esitteli löydöksen, mikä yllätti kaikki. Projekti, johon hän osallistuu, saa rahoitusta.",wrong1:"Tapasimme tutkijan, mikä työskentelee ilmastonmuutoksen parissa. Hän esitteli löydöksen, mikä yllätti kaikki. Projekti, johon hän osallistuu, saa rahoitusta.",wrong2:"Tapasimme tutkijan, joka työskentelee ilmastonmuutoksen parissa. Hän esitteli löydöksen, joka yllätti kaikki. Projekti, joka hän osallistuu, saa rahoitusta.",explanation:`joka = specific person/thing | mikä = clause or abstract | johon = joka in illative\n\nWrong 1: tutkijan, mikä — PERSON → joka\nWrong 2: projekti, joka hän osallistuu — osallistua takes illative → johon`},
+  {topic:"Passiivi",correct:"Kokouksessa käsiteltiin useita asioita. Päätös tehtiin yksimielisesti. Asiasta tiedotetaan henkilöstölle ensi viikolla.",wrong1:"Kokouksessa käsiteltiin useita asioita. Päätös tehtiin yksimielisesti. Asiasta tiedottaa henkilöstölle ensi viikolla.",wrong2:"Kokouksessa käsitellään useita asioita. Päätös tehdään yksimielisesti. Asiasta tiedotetaan henkilöstölle ensi viikolla.",explanation:`Wrong 1: tiedottaa is active — no subject → use passive: tiedotetaan.\n\nWrong 2: Meeting is past → past passive (-tiin). Future → present passive (-taan). Mixing tenses is wrong.`},
+  {topic:"Monikon paikallissija",correct:"Rasismi esiintyy muissa kaupungeissa ja kouluissa. Ihmiset, jotka muuttavat tänne, kohtaavat ennakkoluuloja monissa tilanteissa.",wrong1:"Rasismi esiintyy muissa kaupungissa ja kouluissa. Ihmiset, jotka muuttavat tänne, kohtaavat ennakkoluuloja monissa tilanteissa.",wrong2:"Rasismi esiintyy muissa kaupungeissa ja kouluissa. Ihmiset, jotka muuttavat tänne, kohtaavat ennakkoluuloja monissa tilanteessa.",explanation:`Plural determiner → noun needs PLURAL inessive (-issa/-issä).\n\nWrong 1: muissa kaupungissa → kaupungeissa\nWrong 2: monissa tilanteessa → tilanteissa`},
+  {topic:"Genetiivirakenne",correct:"Minun täytyy esittää raportti ensi viikolla. Jokaisen opiskelijan pitää osallistua. Heidän kannattaisi harkita vaihtoehtoja.",wrong1:"Minä täytyy esittää raportti ensi viikolla. Jokainen opiskelija pitää osallistua. Heidän kannattaisi harkita vaihtoehtoja.",wrong2:"Minun täytyy esittää raportti ensi viikolla. Jokaisen opiskelijan pitää osallistua. He kannattaisi harkita vaihtoehtoja.",explanation:`Täytyy/pitää/kannattaa need GENITIVE subject.\n\nWrong 1: Minä→Minun | Jokainen opiskelija→Jokaisen opiskelijan\nWrong 2: He→Heidän`},
+  {topic:"Rekisteri",correct:"Haluaisin tiedustella mahdollisuutta osallistua konferenssiin. Minulla on useita kysymyksiä. Voisitteko lähettää minulle lisätietoja?",wrong1:"Haluaisin tiedustella mahdollisuutta osallistua konferenssiin. Mulla on useita kysymyksiä. Voisitteko lähettää mulle lisätietoja?",wrong2:"Mä haluaisin tiedustella mahdollisuutta osallistua konferenssiin. Minulla on useita kysymyksiä. Voisitteko lähettää minulle lisätietoja?",explanation:`No colloquial forms in formal writing.\n\nWrong 1: mulla→minulla | mulle→minulle\nWrong 2: Mä→Minä`},
+  {topic:"Translatiivi + 3. infinitiivi",correct:"Tilanne on muuttunut monimutkaisemmaksi. Hän lähti opiskelemaan Helsinkiin. Lopetin tupakoimisen viime vuonna.",wrong1:"Tilanne on muuttunut monimutkaisempi. Hän lähti opiskelemassa Helsinkiin. Lopetin tupakoimisen viime vuonna.",wrong2:"Tilanne on muuttunut monimutkaisemmaksi. Hän lähti opiskelemaan Helsinkiin. Lopetin tupakoida viime vuonna.",explanation:`Wrong 1: muuttunut monimutkaisempi — muuttua + TRANSLATIVE (-ksi): monimutkaisemmaksi. Lähti opiskelemassa — lähteä + purpose = ILLATIVE: opiskelemaan.\n\nWrong 2: lopetin tupakoida — lopettaa needs verbal noun: tupakoimisen.`},
+];
+
+const PROMPTS=[
+  {title:"Yhteiskunnallinen essee",instruction:"Kirjoita pohdiskeleva essee (100–200 sanaa) siitä, miten rasismi tai syrjintä vaikuttaa yhteiskuntaan."},
+  {title:"Muodollinen sähköposti",instruction:"Kirjoita muodollinen sähköposti (80–150 sanaa) yritykselle hakiessasi harjoittelupaikkaa."},
+  {title:"Mielipideteksti",instruction:"Kirjoita mielipidekirjoitus (100–200 sanaa) jostakin ajankohtaisesta aiheesta."},
+  {title:"Vertaileva analyysi",instruction:"Vertaile kahta opiskelutapaa tai elämäntapaa (100–200 sanaa)."},
+  {title:"Reflektiivinen kirjoitus",instruction:"Kirjoita reflektiivinen teksti (100–200 sanaa) siitä, miten jokin kokemus muutti sinua."},
+  {title:"Kulttuurinen pohdiskelu",instruction:"Kirjoita pohdiskeleva teksti (100–200 sanaa) suomalaisesta kulttuurista tai kulttuurierosta."},
+  {title:"Vapaa kirjoitus",instruction:"Kirjoita mitä tahansa suomeksi (100–200 sanaa)."},
+];
+
+function buildOptions(q){
+  const items=[{text:q.correct,isCorrect:true},{text:q.wrong1,isCorrect:false},{text:q.wrong2,isCorrect:false}];
+  for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+  return items.map((item,i)=>({...item,label:["A","B","C"][i]}));
+}
+
+function App(){
+  const[tab,setTab]=useState("quiz");
+  const[qIdx,setQIdx]=useState(null);
+  const[options,setOptions]=useState([]);
+  const[chosen,setChosen]=useState(null);
+  const[pIdx,setPIdx]=useState(null);
+  const[essay,setEssay]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[result,setResult]=useState(null);
+  const[apiErr,setApiErr]=useState("");
+  const[activeI,setActiveI]=useState(null);
+  const[showFix,setShowFix]=useState(false);
+  const[copied,setCopied]=useState(false);
+
+  const words=essay.trim()?essay.trim().split(/\s+/).length:0;
+  const q=qIdx!=null?QUIZ[qIdx]:null;
+  const p=pIdx!=null?PROMPTS[pIdx]:null;
+  const correctLabel=options.find(o=>o.isCorrect)?.label;
+
+  function newQuiz(){const i=Math.floor(Math.random()*QUIZ.length);setQIdx(i);setOptions(buildOptions(QUIZ[i]));setChosen(null);}
+  function newPrompt(){setPIdx(Math.floor(Math.random()*PROMPTS.length));setEssay("");setResult(null);setApiErr("");setActiveI(null);setShowFix(false);}
+  const handleChange=useCallback(e=>{setEssay(e.target.value);setResult(null);setApiErr("");setActiveI(null);},[]);
+
+  async function check(){
+    setLoading(true);setResult(null);setApiErr("");setActiveI(null);setShowFix(false);
+    try{
+      const text=await callAPI(`You are an expert Finnish B2 language teacher. Read this student's Finnish text and find EVERY mistake — grammar, case endings, verb forms, colloquial words, compound words written separately, missing commas before relative clauses, word choice, anything at all.
+
+Writing topic: ${p?p.instruction:"Free writing"}
+
+Student text:
+"""
+${essay}
+"""
+
+Reply in EXACTLY this format — nothing else, no extra commentary:
+
+ERRORS:
+- WRONG: exact phrase from text | RIGHT: corrected form | WHY: one sentence in English
+(if no errors: - No errors found)
+
+CORRECTED:
+Write the full corrected text here. Fix every error. Keep the student's ideas. Write natural B2 Finnish.`);
+      const parsed=parseResponse(text);
+      setResult(parsed);
+      setActiveI(parsed.errors.length===1?0:null);
+    }catch(e){setApiErr(e.message);}
+    finally{setLoading(false);}
+  }
+
+  async function copy(){try{await navigator.clipboard.writeText(result.corrected);setCopied(true);setTimeout(()=>setCopied(false),2000);}catch{}}
+
+  const sevColor=n=>n===0?GREEN:n<=2?AMBER:RED;
+  const sevBg=n=>n===0?GREENL:n<=2?AMBERL:REDL;
+
+  return h(Fragment,null,
+    // Header
+    h("div",{style:{background:FINN,color:"#fff",padding:"14px 22px",borderBottom:"3px solid #002060"}},
+      h("div",{style:{maxWidth:700,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center"}},
+        h("div",null,h("div",{style:{fontSize:9,letterSpacing:4,opacity:.7,marginBottom:2}},"SUOMEN KIELI"),h("div",{style:{fontSize:20,fontWeight:800}},"B2 Harjoittelu")),
+        h("span",{style:{background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.3)",borderRadius:20,padding:"4px 14px",fontSize:12,fontWeight:700}},"B2 TASO")
+      )
+    ),
+    // Tabs
+    h("div",{style:{background:SURF,borderBottom:`1.5px solid ${BRD}`}},
+      h("div",{style:{maxWidth:700,margin:"0 auto",display:"flex"}},
+        [{id:"quiz",label:"Oikea vai väärä?"},{id:"write",label:"Kirjoitusharjoitus"}].map(t=>
+          h("button",{key:t.id,onClick:()=>setTab(t.id),style:{flex:1,padding:"12px 10px",border:"none",background:tab===t.id?BG:"transparent",color:tab===t.id?FINN:MUTED,borderBottom:tab===t.id?`3px solid ${FINN}`:"3px solid transparent",fontSize:14,fontWeight:tab===t.id?700:400}},t.label)
+        )
+      )
+    ),
+    // Content
+    h("div",{style:{maxWidth:700,margin:"0 auto",padding:"20px 16px 60px"}},
+
+      // QUIZ TAB
+      tab==="quiz"&&h("div",{style:{animation:"up .3s ease"}},
+        h("p",{style:{color:MUTED,fontSize:14,lineHeight:1.7,marginBottom:18}},"Kolme tekstiä — vain yksi on oikein kirjoitettu. Löydä se!"),
+        h(Btn,{onClick:newQuiz,full:true},q?"Uusi tehtävä":"Aloita tehtävä"),
+        q&&h("div",{style:{marginTop:20,animation:"up .3s ease"}},
+          h("div",{style:{fontSize:11,color:MUTED,letterSpacing:2,textTransform:"uppercase",marginBottom:14}},"Aihe: "+q.topic),
+          options.map(({label,text,isCorrect})=>{
+            const isChosen=chosen===label,revealed=chosen!==null;
+            let bc=BRD,bg2=BG;
+            if(revealed&&isCorrect){bc=GREEN;bg2=GREENL;}
+            if(revealed&&isChosen&&!isCorrect){bc=RED;bg2=REDL;}
+            if(!revealed&&isChosen)bc=FINN;
+            return h("div",{key:label,onClick:()=>!chosen&&setChosen(label),style:{background:bg2,border:`2px solid ${bc}`,borderRadius:12,padding:"16px 20px",marginBottom:10,cursor:chosen?"default":"pointer",transition:"all .2s"}},
+              h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},
+                h("span",{style:{fontWeight:800,fontSize:15,color:FINN}},"Teksti "+label),
+                revealed&&isCorrect&&h("span",{style:{background:GREEN,color:"#fff",borderRadius:20,padding:"2px 12px",fontSize:12,fontWeight:700}},"Oikein"),
+                revealed&&isChosen&&!isCorrect&&h("span",{style:{background:RED,color:"#fff",borderRadius:20,padding:"2px 12px",fontSize:12,fontWeight:700}},"Väärin"),
+                !revealed&&h("span",{style:{color:MUTED,fontSize:12}},"Paina valitaksesi")
+              ),
+              h("div",{style:{fontSize:15,lineHeight:1.9}},text)
+            );
+          }),
+          chosen&&h("div",{style:{background:FINNL,border:`1.5px solid ${FINN}`,borderRadius:12,padding:"20px 22px",animation:"up .35s ease"}},
+            h("div",{style:{fontWeight:800,color:chosen===correctLabel?GREEN:RED,fontSize:16,marginBottom:10}},chosen===correctLabel?"✓ Oikein! Hienoa!":"✗ Ei ihan — mutta hyvä yritys!"),
+            h("div",{style:{fontSize:14,lineHeight:1.9,whiteSpace:"pre-line"}},q.explanation),
+            h("div",{style:{marginTop:16}},h(Btn,{onClick:newQuiz},"Seuraava tehtävä"))
+          )
+        )
+      ),
+
+      // WRITE TAB
+      tab==="write"&&h("div",{style:{animation:"up .3s ease"}},
+        h(Card,null,
+          h(Dot,{n:1}),
+          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:p?16:0}},
+            h("div",{style:{fontSize:16,fontWeight:700}},"Kirjoitusaihe"),
+            h(Btn,{onClick:newPrompt,small:true},p?"Uusi aihe":"Hae aihe")
+          ),
+          !p&&h("p",{style:{color:MUTED,fontStyle:"italic",fontSize:14}},"Paina \"Hae aihe\" saadaksesi kirjoitustehtävän."),
+          p&&h("div",{style:{animation:"up .3s ease"}},
+            h("div",{style:{fontSize:17,fontWeight:800,color:FINN,marginBottom:8}},p.title),
+            h("div",{style:{fontSize:15,lineHeight:1.8,color:"#374151"}},p.instruction)
+          )
+        ),
+        h(Card,{style:{opacity:p?1:0.45}},
+          h(Dot,{n:2}),
+          h("div",{style:{fontSize:16,fontWeight:700,marginBottom:12}},"Kirjoita tähän"),
+          h("textarea",{value:essay,onChange:handleChange,disabled:!p,placeholder:p?"Kirjoita suomeksi tähän…":"Hae ensin aihe…",rows:11,style:{width:"100%",padding:"14px",lineHeight:1.85,background:SURF,color:TXT,border:`1.5px solid ${BRD}`,borderRadius:8,resize:"vertical"}}),
+          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10,flexWrap:"wrap",gap:10}},
+            h("span",{style:{fontSize:13,color:words>=60?FINN:MUTED,fontWeight:words>=60?600:400}},words+" sanaa"+(words>=60?" ✓":words>0?" — kirjoita lisää":"")),
+            h(Btn,{onClick:check,disabled:words<5||!p||loading},loading?"Analysoidaan…":"✦ Tarkista kirjoitus")
+          )
+        ),
+        loading&&h(Card,null,
+          h("div",{style:{display:"flex",alignItems:"center",gap:14,padding:"8px 0"}},
+            h("div",{style:{width:24,height:24,border:`3px solid ${FINN}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .7s linear infinite",flexShrink:0}}),
+            h("div",{style:{fontSize:14,color:MUTED,fontStyle:"italic"}},"Claude lukee tekstisi ja etsii kaikki virheet… hetki.")
+          )
+        ),
+        apiErr&&!loading&&h("div",{style:{background:REDL,border:`1.5px solid ${RED}`,borderRadius:10,padding:"16px 20px",marginBottom:14}},
+          h("div",{style:{fontWeight:700,color:RED,marginBottom:6}},"⚠ Virhe"),
+          h("div",{style:{fontSize:14,color:"#7f1d1d",lineHeight:1.65}},apiErr)
+        ),
+        result&&!loading&&h("div",{style:{animation:"up .4s ease"}},
+          h("div",{style:{background:sevBg(result.errors.length),border:`1.5px solid ${sevColor(result.errors.length)}`,borderRadius:12,padding:"16px 20px",marginBottom:14}},
+            h("div",{style:{display:"flex",alignItems:"center",gap:10}},
+              h(Dot,{n:3}),
+              h("div",null,
+                h("div",{style:{fontWeight:800,fontSize:17,color:sevColor(result.errors.length)}},result.errors.length===0?"✓ Ei virheitä — hienoa työtä!":`${result.errors.length} virhe${result.errors.length===1?"":"ttä"} löytyi`),
+                h("div",{style:{fontSize:13,color:MUTED,marginTop:2}},result.errors.length>0?"Napauta virhettä nähdäksesi selityksen.":"Tekstisi on grammatisesti oikein.")
+              )
+            )
+          ),
+          result.errors.length>0&&h(Card,{accent:RED},
+            h("div",{style:{fontSize:12,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:1,marginBottom:10}},"Alkuperäinen — virheet punaisella"),
+            h("div",{style:{background:SURF,borderRadius:10,padding:"16px 18px",marginBottom:18}},
+              marked(essay,result.errors.map(e=>e.wrong),RED,"#fee2e2",ph=>{const idx=result.errors.findIndex(e=>e.wrong.toLowerCase()===ph.toLowerCase());setActiveI(activeI===idx?null:idx);},activeI!=null?result.errors[activeI]?.wrong:null)
+            ),
+            result.errors.map((err,i)=>{
+              const isOpen=activeI===i;
+              return h("div",{key:i,className:"irow",onClick:()=>setActiveI(isOpen?null:i),style:{border:`1.5px solid ${isOpen?FINN:BRD}`,borderLeft:`4px solid ${RED}`,borderRadius:8,padding:"12px 14px",marginBottom:8,background:isOpen?FINNL:BG,cursor:"pointer",transition:"background .15s"}},
+                h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},
+                  h("div",{style:{flex:1,minWidth:0}},
+                    h("span",{style:{background:RED,color:"#fff",borderRadius:5,padding:"1px 8px",fontSize:11,fontWeight:700,marginRight:8}},"Virhe "+(i+1)),
+                    h("span",{style:{color:RED,fontWeight:700,fontSize:14}},"„"+err.wrong+""")
+                  ),
+                  h("span",{style:{color:MUTED,fontSize:14,marginLeft:8,flexShrink:0}},isOpen?"▲":"▼")
+                ),
+                isOpen&&h("div",{style:{marginTop:14,animation:"up .2s ease"}},
+                  h("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}},
+                    h("div",{style:{background:REDL,border:`1px solid ${RED}44`,borderRadius:7,padding:"8px 14px",fontSize:14,color:RED,fontWeight:600,textDecoration:"line-through"}},err.wrong),
+                    h("span",{style:{fontSize:22,color:MUTED,flexShrink:0}},"→"),
+                    h("div",{style:{background:GREENL,border:`1px solid ${GREEN}44`,borderRadius:7,padding:"8px 14px",fontSize:14,color:GREEN,fontWeight:700}},err.right)
+                  ),
+                  err.why&&h("div",{style:{background:FINNL,borderRadius:7,padding:"10px 14px",fontSize:14,lineHeight:1.75,color:TXT}},"💡 "+err.why)
+                )
+              );
+            })
+          ),
+          result.corrected&&h(Card,{accent:GREEN},
+            h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:showFix?16:0}},
+              h("div",null,
+                h("div",{style:{fontSize:12,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:1,marginBottom:3}},"Korjattu teksti"),
+                h("div",{style:{fontSize:15,fontWeight:800,color:GREEN}},result.errors.length===0?"Teksti on jo oikein ✓":"Kaikki virheet korjattu")
+              ),
+              h("div",{style:{display:"flex",gap:8}},
+                h("button",{onClick:()=>setShowFix(!showFix),style:{background:"transparent",border:`1.5px solid ${FINN}`,color:FINN,borderRadius:7,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}},showFix?"Piilota":"Näytä"),
+                showFix&&h("button",{onClick:copy,style:{background:copied?GREEN:FINN,color:"#fff",border:"none",borderRadius:7,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",transition:"background .2s"}},copied?"Kopioitu ✓":"Kopioi")
+              )
+            ),
+            showFix&&h("div",{style:{animation:"up .25s ease"}},
+              h("div",{style:{background:SURF,borderRadius:10,padding:"16px 18px",marginBottom:result.errors.length?10:0}},
+                marked(result.corrected,result.errors.map(e=>e.right).filter(Boolean),GREEN,"#bbf7d0",null,null)
+              ),
+              result.errors.length>0&&h("div",{style:{fontSize:12,color:MUTED,fontStyle:"italic"}},"Vihreällä = korjatut kohdat")
+            )
+          ),
+          h("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:4}},
+            h(Btn,{onClick:()=>{setResult(null);setActiveI(null);setShowFix(false);},outline:true,small:true},"Muokkaa tekstiä"),
+            h(Btn,{onClick:newPrompt,outline:true,small:true},"Uusi aihe")
+          )
+        )
+      )
+    )
+  );
+}
+
+const root=ReactDOM.createRoot(document.getElementById("root"));
+root.render(h(App));
+</script>
+</body>
+</html>
